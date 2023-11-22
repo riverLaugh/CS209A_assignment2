@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.*;
+import java.util.stream.Stream;
 
 public class server {
     private static final int PORT = 12345;
@@ -60,6 +61,68 @@ public class server {
                 }
             }
         }
+        private static void sendSingleFile(File subfile, ObjectOutputStream out) throws FileNotFoundException, IOException {
+            try (FileInputStream fileIn = new FileInputStream(subfile)) {
+                out.writeUTF(subfile.getName());
+                System.out.printf("file name : %s\n", subfile.getName());
+                out.writeLong(subfile.length());
+                System.out.printf("Long : %d\n", subfile.length());
+                byte[] buffer = new byte[4096];
+                int length;
+                while ((length = fileIn.read(buffer)) > 0) {
+                    out.write(buffer, 0, length);
+                }
+            }
+        }
+
+        private static void sendDirFile(File subfile, ObjectOutputStream out) throws FileNotFoundException, IOException {
+            try (FileInputStream fileIn = new FileInputStream(subfile)) {
+                out.writeLong(subfile.length());
+                System.out.printf("Long : %d\n", subfile.length());
+                byte[] buffer = new byte[4096];
+                int length;
+                while ((length = fileIn.read(buffer)) > 0) {
+                    out.write(buffer, 0, length);
+                }
+            }
+        }
+
+        private static void sendFile(File file, ObjectOutputStream out, String basePathString) throws IOException {
+            if (file.isDirectory()) {
+                System.out.println("it is a dir");
+                out.writeBoolean(true);
+                System.out.println(true);
+                out.writeUTF("FILES_TP");
+                System.out.println("FILES_TP");
+                try (Stream<Path> files = Files.walk(file.toPath());) {
+                    Path basePath = Paths.get(basePathString);
+                    files.forEach(path -> {
+                        System.out.println(path.toString());
+                        File subfile = path.toFile();
+                        if (!subfile.isDirectory()) { //只取文件
+                            String relativePath = basePath.relativize(path).toString();
+                            try {
+                                out.writeUTF(relativePath); // dir1/"1.txt"
+                                System.out.println(relativePath);
+                                sendDirFile(subfile, out);
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                    });
+                }
+                out.writeUTF("END_OF_DIR");
+            } else if (file.isFile()){
+                System.out.println("it is a file");
+                out.writeBoolean(false);
+                out.writeUTF("FILES_TP");
+                System.out.println("FILES_TP");
+                sendSingleFile(file, out);
+            }
+            else{
+                System.out.println(file.toPath().toString());
+            }
+        }
 
         public void run() {
             try (ObjectInputStream in = new ObjectInputStream(clientSocket.getInputStream());
@@ -90,6 +153,7 @@ public class server {
                         }
                     }
                     case "down" -> {
+
 
                     }
 

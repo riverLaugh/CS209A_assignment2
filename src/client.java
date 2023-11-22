@@ -33,7 +33,9 @@ public class client {
                         out.writeUTF("END_OF_FILES");
                         System.out.println("END_OF_FILES");
                     }
+                    case "down" ->{
 
+                    }
                 }
             }
         }
@@ -66,7 +68,6 @@ public class client {
             }
         }
     }
-
 
     private static void sendFile(File file, ObjectOutputStream out, String basePathString) throws IOException {
         if (file.isDirectory()) {
@@ -105,18 +106,35 @@ public class client {
         }
     }
 
+    private static void createDirFile(String basepath ,String relativePath, ObjectInputStream in) throws IOException {
+        Path path = Paths.get(basepath, relativePath);
+        System.out.printf("path : %s", path.toString());
+        Files.createDirectories(path.getParent()); // 确保父目录存在
 
-    private static void receiveFile(String fileName) throws IOException {
-        Socket socket = new Socket(HOST, PORT);
-        try (ObjectInputStream in = new ObjectInputStream(socket.getInputStream()); FileOutputStream fileOut = new FileOutputStream("Download/" + fileName); ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream())) {
-            out.writeUTF(fileName);
-            long fileLength = in.readLong();
+        long fileLength = in.readLong(); // 读取文件长度
+        try (OutputStream fileOut = new FileOutputStream(path.toFile())) {
             byte[] buffer = new byte[4096];
-            int length;
-            while (fileLength > 0 && (length = in.read(buffer, 0, (int) Math.min(buffer.length, fileLength))) != -1) {
-                fileOut.write(buffer, 0, length);
-                fileLength -= length;
+            int bytesRead;
+            while (fileLength > 0 && (bytesRead = in.read(buffer, 0, (int) Math.min(buffer.length, fileLength))) > 0) {
+                fileOut.write(buffer, 0, bytesRead);
+                fileLength -= bytesRead;
             }
         }
     }
+
+    private static void createSingleFile(String basepath, ObjectInputStream in) throws IOException {
+        Path path = Paths.get(basepath, in.readUTF());
+        System.out.printf("path : %s", path.toString());
+
+        long fileLength = in.readLong(); // 读取文件长度
+        try (OutputStream fileOut = new FileOutputStream(path.toFile())) {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while (fileLength > 0 && (bytesRead = in.read(buffer, 0, (int) Math.min(buffer.length, fileLength))) > 0) {
+                fileOut.write(buffer, 0, bytesRead);
+                fileLength -= bytesRead;
+            }
+        }
+    }
+
 }
