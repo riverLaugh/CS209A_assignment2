@@ -13,7 +13,6 @@ public class server {
     public static void main(String[] args) throws IOException {
         ServerSocket serverSocket = new ServerSocket(PORT);
         System.out.println("Server is listening on port " + PORT);
-
         try {
             while (true) {
                 Socket clientSocket = serverSocket.accept();
@@ -34,40 +33,45 @@ public class server {
 
         @Override
         public void run() {
-            try (ObjectInputStream in = new ObjectInputStream(clientSocket.getInputStream());
-                 ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream())) {
+            try (ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream());
+                 ObjectInputStream in = new ObjectInputStream(clientSocket.getInputStream());
+            ) {
                 String cmd = in.readUTF();
-                System.out.println(cmd);
+//                System.out.println(cmd);
                 switch (cmd) {
                     case "up" -> {
                         receiveFile(in);
                         System.out.println("finish ftp");
                     }
-                    case "down" ->{
+                    case "down" -> {
                         String fileName = in.readUTF();
-                        File file = new File("D:\\23f\\Java2\\CS209A_assignment2\\download", fileName);
+                        String basePathString = "D:\\23f\\Java2\\CS209A_assignment2\\resources";
+                        File file = new File(basePathString, fileName);
                         out.writeBoolean(file.isDirectory());
-                        if (file.exists()) {
-                            if(file.isDirectory()){
-                                try(Stream<Path> files = Files.walk(file.toPath())){
-                                    files.filter(Files::isRegularFile).forEach(filePath ->{
-                                        try {
-                                            out.writeUTF(filePath.toString());
-                                        } catch (IOException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    });
-                                }
-                                out.writeUTF("End of dir");
-
-                            }else{
-                                sendFile(file, out); // 发送文件
+                        out.flush();
+//                        System.out.printf("%s is dir: %b\n", fileName, file.isDirectory());
+                        if (file.isDirectory()) {
+                            try (Stream<Path> files = Files.walk(file.toPath())) {
+                                files.filter(Files::isRegularFile).forEach(filePath -> {
+                                    try {
+                                        System.out.println(filePath);
+                                        String relativePath = Paths.get(basePathString).relativize(filePath).toString();
+                                        System.out.println(relativePath);
+                                        out.writeUTF(relativePath);
+                                    } catch (IOException e) {
+                                        e.printStackTrace();
+                                    }
+                                });
                             }
+                            out.writeUTF("END_OF_DIR");
+                            out.flush();
+                        } else if (file.exists()) {
+                            sendFile(file, out,Paths.get(basePathString));
                         } else {
-                            System.out.println("the file not exists");
-                            // 文件不存在的处理
+                            System.out.println("File not found: " + fileName);
                         }
                     }
+
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -80,14 +84,22 @@ public class server {
             }
         }
 
-        private static void sendFile(File file, ObjectOutputStream out) throws IOException {
-            out.writeUTF(file.getName());
-            out.writeLong(file.length());
+        private static void sendFile(File file, ObjectOutputStream out,Path basePath) throws IOException {
             try (FileInputStream fileIn = new FileInputStream(file)) {
+                String relativePath = basePath.relativize(file.toPath()).toString();
+                out.writeUTF(relativePath);
+                out.flush();
+                out.writeLong(file.length());
+                out.flush();
+                System.out.printf("%s length is %d",file.getName(),file.length());
+                System.out.println(file.toString() + "is sending");
                 byte[] buffer = new byte[4096];
                 int length;
                 while ((length = fileIn.read(buffer)) > 0) {
+                    System.out.println((String.valueOf(length) + " bytes are parpring to send"));
                     out.write(buffer, 0, length);
+                    out.flush();
+                    System.out.println(String.valueOf(length+" bytes are sent"));
                 }
             }
         }
@@ -104,20 +116,6 @@ public class server {
                 while (fileLength > 0 && (bytesRead = in.read(buffer, 0, (int) Math.min(buffer.length, fileLength))) > 0) {
                     fileOut.write(buffer, 0, bytesRead);
                     fileLength -= bytesRead;
-                }
-            }
-        }
-
-        private static void sendFile(File subfile, ObjectOutputStream out, Path basePath) throws FileNotFoundException, IOException {
-            String relativePath = basePath.relativize(subfile.toPath()).toString();
-            try (FileInputStream fileIn = new FileInputStream(subfile)) {
-                out.writeUTF(relativePath);
-                out.writeLong(subfile.length());
-                System.out.printf("Long : %d\n", subfile.length());
-                byte[] buffer = new byte[4096];
-                int length;
-                while ((length = fileIn.read(buffer)) > 0) {
-                    out.write(buffer, 0, length);
                 }
             }
         }
