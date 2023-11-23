@@ -17,7 +17,7 @@ public class server {
         try {
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                System.out.println("connect successful");
+                System.out.println(clientSocket.toString());
                 pool.execute(new ClientHandler(clientSocket));
             }
         } finally {
@@ -43,26 +43,31 @@ public class server {
                         receiveFile(in);
                         System.out.println("finish ftp");
                     }
-//                    case "down" -> {
-//                        String fileToDownload = in.readUTF();
-//                        Path path = Paths.get("D:\\23f\\java2\\assignment2\\Storage", fileToDownload);
-//                        if (Files.isDirectory(path)) {
-//                            // 遍历文件夹并发送所有文件
-//                            try (Stream<Path> paths = Files.walk(path)) {
-//                                paths.filter(Files::isRegularFile).forEach(filePath -> {
-//                                    try {
-//                                        sendSingleFile(filePath.toFile(), out);
-//                                    } catch (IOException e) {
-//                                        throw new RuntimeException(e);
-//                                    }
-//                                });
-//                            }
-//                        } else if (Files.isRegularFile(path)) {
-//                            // 发送单个文件
-//                            sendSingleFile(path.toFile(), out);
-//                        }
-//                    }
-                    // 可以添加更多命令处理
+                    case "down" ->{
+                        String fileName = in.readUTF();
+                        File file = new File("D:\\23f\\Java2\\CS209A_assignment2\\download", fileName);
+                        out.writeBoolean(file.isDirectory());
+                        if (file.exists()) {
+                            if(file.isDirectory()){
+                                try(Stream<Path> files = Files.walk(file.toPath())){
+                                    files.filter(Files::isRegularFile).forEach(filePath ->{
+                                        try {
+                                            out.writeUTF(filePath.toString());
+                                        } catch (IOException e) {
+                                            throw new RuntimeException(e);
+                                        }
+                                    });
+                                }
+                                out.writeUTF("End of dir");
+
+                            }else{
+                                sendFile(file, out); // 发送文件
+                            }
+                        } else {
+                            System.out.println("the file not exists");
+                            // 文件不存在的处理
+                        }
+                    }
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -75,10 +80,23 @@ public class server {
             }
         }
 
+        private static void sendFile(File file, ObjectOutputStream out) throws IOException {
+            out.writeUTF(file.getName());
+            out.writeLong(file.length());
+            try (FileInputStream fileIn = new FileInputStream(file)) {
+                byte[] buffer = new byte[4096];
+                int length;
+                while ((length = fileIn.read(buffer)) > 0) {
+                    out.write(buffer, 0, length);
+                }
+            }
+        }
+
+
         private void receiveFile(ObjectInputStream in) throws IOException {
             String relativePath = in.readUTF();
             long fileLength = in.readLong();
-            Path path = Paths.get("D:\\23f\\java2\\assignment2\\Storage", relativePath);
+            Path path = Paths.get("D:\\23f\\Java2\\CS209A_assignment2\\Storage", relativePath);
             Files.createDirectories(path.getParent());
             try (OutputStream fileOut = new FileOutputStream(path.toFile())) {
                 byte[] buffer = new byte[4096];
