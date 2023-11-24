@@ -47,7 +47,6 @@ public class server {
                     }
                     case "down" -> {
                         String fileName = in.readUTF();
-
                         File file = new File(basePathString, fileName);
                         out.writeBoolean(file.isDirectory());
                         out.flush();
@@ -68,7 +67,7 @@ public class server {
                             out.writeUTF("END_OF_DIR");
                             out.flush();
                         } else if (file.exists()) {
-                            sendFile(file, out, Paths.get(basePathString));
+                            sendFile(file, out, in, Paths.get(basePathString));
                         } else {
                             System.out.println("File not found: " + fileName);
                         }
@@ -81,7 +80,7 @@ public class server {
 
                 }
             } catch (IOException e) {
-                e.printStackTrace();
+                System.out.println("something closed,if you know,dont panic");
             } finally {
                 try {
                     clientSocket.close();
@@ -91,22 +90,42 @@ public class server {
             }
         }
 
-        private static void sendFile(File file, ObjectOutputStream out, Path basePath) throws IOException {
+        private static void sendFile(File file, ObjectOutputStream out, ObjectInputStream in, Path basePath) throws IOException {
             try (FileInputStream fileIn = new FileInputStream(file)) {
                 String relativePath = basePath.relativize(file.toPath()).toString();
                 out.writeUTF(relativePath);
                 out.flush();
                 out.writeLong(file.length());
                 out.flush();
-                System.out.printf("%s length is %d", file.getName(), file.length());
-                System.out.println(file.toString() + "is sending");
+                System.out.printf("%s length is %d\n", file.getName(), file.length());
+                System.out.println(file.toString() + " is sending\n");
                 byte[] buffer = new byte[4096];
                 int length;
                 while ((length = fileIn.read(buffer)) > 0) {
-                    System.out.println((String.valueOf(length) + " bytes are parpring to send"));
+                    String inst = in.readUTF();
+                    System.out.println(inst);
+                    if (inst.equals("CANCEL")){
+                        System.out.println(file+" is canceled\n");
+                        break;
+                    }else if(inst.equals("PAUSED")){
+                        if (in.readUTF().equals("IN_PROGRESS")){
+                            System.out.println(file+" is resumed\n");
+                        }else if (in.readUTF().equals("CANCEL")){
+                            System.out.println(file+" is canceled\n");
+                            break;
+                        }
+                    }
+                    out.writeInt(length);
+                    System.out.println((String.valueOf(length) + " bytes are parpring to send\n"));
                     out.write(buffer, 0, length);
                     out.flush();
-                    System.out.println(String.valueOf(length + " bytes are sent"));
+                    System.out.println(String.valueOf(length + " bytes are sent\n"));
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Thread interrupted", e);
+                    }
                 }
             }
         }
@@ -120,18 +139,18 @@ public class server {
             try (OutputStream fileOut = new FileOutputStream(path.toFile())) {
                 String inst = "";
                 while (fileLength > 0) {
-                     inst = in.readUTF();
+                    inst = in.readUTF();
                     if ("IN_PROGRESS".equals(inst)) {
                         int dataSize = in.readInt(); // 读取数据长度
                         byte[] data = new byte[dataSize];
                         in.readFully(data);
                         fileOut.write(data, 0, dataSize);
                         fileLength -= dataSize;
-                    } else if ("CANCEL".equals(inst)){
+                    } else if ("CANCEL".equals(inst)) {
                         break;
                     }
                 }
-                if ("CANCEL".equals(inst)){
+                if ("CANCEL".equals(inst)) {
                     fileOut.close();
                     Files.deleteIfExists(path);
                     // 检查并删除空的父目录
@@ -139,7 +158,7 @@ public class server {
                     if (isDirectoryEmpty(parentDir)) {
                         Files.deleteIfExists(parentDir);
                     }
-                    System.out.println(relativePath +" is canceled");
+                    System.out.println(relativePath + " is canceled");
                 }
             }
 

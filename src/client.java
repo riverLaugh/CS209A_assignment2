@@ -74,6 +74,8 @@ public class client {
             }
         }
 
+
+
         // 用于等待任务恢复的方法
         public void waitForResume() throws InterruptedException {
             synchronized (pauseLock) {
@@ -84,8 +86,12 @@ public class client {
             }
         }
 
+
         public synchronized void cancel() {
-            status = TaskStatus.CANCELLED;
+            synchronized (pauseLock) {
+                status = TaskStatus.CANCELLED;
+                pauseLock.notifyAll();
+            }
         }
 
         public synchronized TaskStatus getStatus() {
@@ -160,7 +166,7 @@ public class client {
                             try {
                                 downloadFileOrDirectory(fileName, basePathString);
                             } catch (IOException e) {
-                                throw new RuntimeException(e);
+                                System.out.println("something closed,if you know,dont panic");
                             }
                         });
                         System.out.printf("%s is submitted\n", fileName);
@@ -258,10 +264,10 @@ public class client {
             } else {
                 // 处理单个文件
                 System.out.printf("%s is a single file\n", fileName);
-                receiveFile(fileName, in, Paths.get(basePathString));
+                receiveFile(fileName,out, in, Paths.get(basePathString));
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            System.out.println("something close , if you know , dont panic");
         }
     }
 
@@ -280,7 +286,7 @@ public class client {
                     out.writeUTF(finalFile);
                     out.flush();
                     boolean isDir = in.readBoolean();
-                    receiveFile(finalFile, in, Paths.get(basePathString));
+                    receiveFile(finalFile,out, in, Paths.get(basePathString));
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
@@ -309,7 +315,6 @@ public class client {
                 if (task.getStatus() == Task.TaskStatus.CANCELLED) {
                     out.writeUTF("CANCEL");
                     out.flush();
-                    out.close();
                     break; // 终止任务
                 }else{
                     out.writeUTF("IN_PROGRESS");
@@ -329,22 +334,60 @@ public class client {
         }
     }
 
-    private static void receiveFile(String fileName, ObjectInputStream in, Path basePath) throws IOException {
-        String relativePath = in.readUTF();
-        long fileLength = in.readLong();
-        Path filePath = basePath.resolve(relativePath);
-        Files.createDirectories(filePath.getParent());
-        Task task = new Task(filePath.toString(), fileLength, 1);
-        downloadTasks.put(fileName, task);
-        try (OutputStream fileOut = new FileOutputStream(filePath.toFile())) {
-            byte[] buffer = new byte[4096];
-            int bytesRead;
-            while (fileLength > 0 && (bytesRead = in.read(buffer, 0, (int) Math.min(buffer.length, fileLength))) > 0) {
-                fileOut.write(buffer, 0, bytesRead);
-                fileLength -= bytesRead;
-                task.updateCurrentSize(bytesRead);
-                System.out.println(String.valueOf(bytesRead) + "is received");
+    private static void receiveFile(String fileName,ObjectOutputStream out, ObjectInputStream in, Path basePath) {
+        try {
+            String relativePath = in.readUTF();
+            long fileLength = in.readLong();
+            Path filePath = basePath.resolve(relativePath);
+            Files.createDirectories(filePath.getParent());
+            Task task = new Task(filePath.toString(), fileLength, 1);
+            downloadTasks.put(fileName, task);
+            try (OutputStream fileOut = new FileOutputStream(filePath.toFile())) {
+                while (fileLength > 0) {
+                    if (task.status == Task.TaskStatus.CANCELLED) {
+                        out.writeUTF("CANCEL");
+                    } else if (task.status == Task.TaskStatus.PAUSED) {
+                        out.writeUTF("PAUSED");
+                        try {
+                            task.waitForResume(); // 等待任务恢复
+                            if (task.status == Task.TaskStatus.CANCELLED) {
+                                out.writeUTF("CANCEL");
+                                fileOut.close();
+                                Files.deleteIfExists(filePath);
+                                // 检查并删除空的父目录
+                                Path parentDir = filePath.getParent();
+                                if (isDirectoryEmpty(parentDir)) {
+                                    Files.deleteIfExists(parentDir);
+                                }
+                                break;
+                            } else {
+                                out.writeUTF("IN_PROGRESS");
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return; // 或适当处理中断
+                        }
+                        System.out.println(fileName + " status change to " + task.status);
+                    }
+
+                    out.writeUTF("IN_PROGRESS");
+                    out.flush();
+                    int bytesRead = in.readInt();
+                    byte[] buffer = new byte[bytesRead];
+                    in.readFully(buffer);
+                    fileOut.write(buffer, 0, bytesRead);
+                    fileLength -= bytesRead;
+                    task.updateCurrentSize(bytesRead);
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Thread interrupted", e);
+                    }
+                }
             }
+        }catch (IOException e){
+            System.out.println("something closed,if you know,dont panic");
         }
         System.out.printf("%s tp success\n", fileName);
     }
