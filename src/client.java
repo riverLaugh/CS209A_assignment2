@@ -1,5 +1,6 @@
 import java.io.*;
 import java.net.*;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -13,12 +14,13 @@ import java.util.stream.Stream;
 public class client {
     private static final String HOST = "localhost";
     private static final int PORT = 8888;
-    private static ConcurrentHashMap<String, Task> uploadTasks;
+    private static ConcurrentHashMap<String, Task> uploadTasks = new ConcurrentHashMap<>();
+    ;
 
-    private static ConcurrentHashMap<String, Task> downloadTasks;
+    private static ConcurrentHashMap<String, Task> downloadTasks = new ConcurrentHashMap<>();
 
     public static class Task {
-        private String fileName;
+        private String filePath;
         private long totalSize;
         private long CurrentSize;
         private TaskStatus status;
@@ -32,8 +34,8 @@ public class client {
             UPLOAD, DOWNLOAD
         }
 
-        public Task(String fileName, long totalSize, int a) {
-            this.fileName = fileName;
+        public Task(String filePath, long totalSize, int a) {
+            this.filePath = filePath;
             this.totalSize = totalSize;
             this.CurrentSize = 0;
             this.status = TaskStatus.IN_PROGRESS;
@@ -53,6 +55,43 @@ public class client {
             return String.valueOf(totalSize);
         }
 
+        private final Object pauseLock = new Object();
+
+        public void pause() {
+            synchronized (pauseLock) {
+                if (status == TaskStatus.IN_PROGRESS) {
+                    status = TaskStatus.PAUSED;
+                }
+            }
+        }
+
+        public void resume() {
+            synchronized (pauseLock) {
+                if (status == TaskStatus.PAUSED) {
+                    status = TaskStatus.IN_PROGRESS;
+                    pauseLock.notifyAll(); // 唤醒所有等待的线程
+                }
+            }
+        }
+
+        // 用于等待任务恢复的方法
+        public void waitForResume() throws InterruptedException {
+            synchronized (pauseLock) {
+                while (status == TaskStatus.PAUSED) {
+                    pauseLock.wait(); // 等待直到被唤醒
+                    System.out.println("status:" + status.toString());
+                }
+            }
+        }
+
+        public synchronized void cancel() {
+            status = TaskStatus.CANCELLED;
+        }
+
+        public synchronized TaskStatus getStatus() {
+            return status;
+        }
+
         // Getter 方法等
     }
 
@@ -67,10 +106,13 @@ public class client {
                 case "up" -> {
                     String basePathString = "D:\\23f\\Java2\\CS209A_assignment2\\Upload";
                     ExecutorService executor = Executors.newCachedThreadPool();
-                    uploadTasks = new ConcurrentHashMap<>();
                     for (int i = 1; i < cmdList.length; i++) {
                         Path path = Paths.get(basePathString, cmdList[i]);
                         File file = path.toFile();
+                        if (!file.exists()) {
+                            System.out.println("file not found: " + cmdList[i]);
+                        }
+
                         if (file.isDirectory()) {
                             try (Stream<Path> paths = Files.walk(file.toPath())) {
                                 String finalCmd = cmd;
@@ -111,7 +153,6 @@ public class client {
                     downloadTasks = new ConcurrentHashMap<>();
                     String basePathString = "D:\\23f\\Java2\\CS209A_assignment2\\Download";
                     ExecutorService executor = Executors.newCachedThreadPool();
-                    downloadTasks = new ConcurrentHashMap<>();
                     for (int i = 1; i < cmdList.length; i++) {
                         String fileName = cmdList[i];
                         // 使用单独的线程处理每个文件/目录的下载
@@ -138,14 +179,56 @@ public class client {
                         });
                     }
                 }
-                case "pause" ->{
-
+                case "pause" -> {
+                    String type = cmdList[1]; // 任务ID，例如文件名
+                    String taskName = cmdList[2]; // 任务ID，例如文件名
+                    Task task;
+                    if (type.equals("upload")) {
+                        task = uploadTasks.get(taskName);
+                        if (task != null) {
+                            task.pause();
+                        }
+                    } else if (type.equals("download")) {
+                        task = downloadTasks.get(taskName);
+                        if (task != null) {
+                            task.pause();
+                        }
+                    }
+                    System.out.println(taskName +"is paused");
                 }
-                case "reboot" ->{
-
+                case "resume" -> {
+                    String type = cmdList[1]; // 任务ID，例如文件名
+                    String taskName = cmdList[2]; // 任务ID，例如文件名
+                    Task task;
+                    if (type.equals("upload")) {
+                        task = uploadTasks.get(taskName);
+                        if (task != null) {
+                            task.resume();
+                        }
+                    } else if (type.equals("download")) {
+                        task = downloadTasks.get(taskName);
+                        if (task != null) {
+                            task.resume();
+                        }
+                    }
+                    System.out.println(taskName +"is resumed");
                 }
-                case "cancel" ->{
-
+                case "cancel" -> {
+                    String type = cmdList[1]; // 任务ID，例如文件名
+                    String taskName = cmdList[2]; // 任务ID，例如文件名
+                    Task task;
+                    if (type.equals("upload")) {
+                        task = uploadTasks.get(taskName);
+                        if (task != null) {
+                            task.cancel();
+                        }
+                    } else if (type.equals("download")) {
+                        task = downloadTasks.get(taskName);
+                        if (task != null) {
+                            task.cancel();
+                        }
+                    }
+                    System.out.println(taskName +"is canceled");
                 }
 
             }
@@ -207,9 +290,9 @@ public class client {
     }
 
     private static void sendFile(File subfile, ObjectOutputStream out, Path basePath) throws FileNotFoundException, IOException {
-        Task task = new Task(subfile.toString(), subfile.length(),0);
-        uploadTasks.put(subfile.toString(), task);
+        Task task = new Task(subfile.toString(), subfile.length(), 0);
         String relativePath = basePath.relativize(subfile.toPath()).toString();
+        uploadTasks.put(relativePath, task);
         try (FileInputStream fileIn = new FileInputStream(subfile)) {
             out.writeUTF(relativePath);
             System.out.println(relativePath);
@@ -217,8 +300,31 @@ public class client {
             byte[] buffer = new byte[4096];
             int length;
             while ((length = fileIn.read(buffer)) > 0) {
+                try {
+                    task.waitForResume(); // 等待任务恢复
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return; // 或适当处理中断
+                }
+                if (task.getStatus() == Task.TaskStatus.CANCELLED) {
+                    out.writeUTF("CANCEL");
+                    out.flush();
+                    out.close();
+                    break; // 终止任务
+                }else{
+                    out.writeUTF("IN_PROGRESS");
+                    out.flush();
+                }
+                out.writeInt(length);
                 out.write(buffer, 0, length);
+                out.flush();
                 task.updateCurrentSize(length);
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Thread interrupted", e);
+                }
             }
         }
     }
@@ -228,7 +334,7 @@ public class client {
         long fileLength = in.readLong();
         Path filePath = basePath.resolve(relativePath);
         Files.createDirectories(filePath.getParent());
-        Task task = new Task(fileName, fileLength,1);
+        Task task = new Task(filePath.toString(), fileLength, 1);
         downloadTasks.put(fileName, task);
         try (OutputStream fileOut = new FileOutputStream(filePath.toFile())) {
             byte[] buffer = new byte[4096];
@@ -243,5 +349,23 @@ public class client {
         System.out.printf("%s tp success\n", fileName);
     }
 
+    private static boolean isDirectoryEmpty(Path directory) throws IOException {
+        try (DirectoryStream<Path> dirStream = Files.newDirectoryStream(directory)) {
+            return !dirStream.iterator().hasNext();
+        }
+    }
 
+    private static void cancelUploadTask(String relativePath) {
+        try (Socket socket = new Socket(HOST, PORT);
+             ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+             ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
+            out.writeUTF("cancel");
+            out.writeUTF(relativePath);
+            out.flush();
+        } catch (UnknownHostException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
 }
