@@ -75,7 +75,6 @@ public class client {
         }
 
 
-
         // 用于等待任务恢复的方法
         public void waitForResume() throws InterruptedException {
             synchronized (pauseLock) {
@@ -86,6 +85,9 @@ public class client {
             }
         }
 
+        public void finish() {
+            this.status = TaskStatus.COMPLETED;
+        }
 
         public synchronized void cancel() {
             synchronized (pauseLock) {
@@ -174,16 +176,22 @@ public class client {
                     executor.shutdown();
                 }
                 case "status" -> {
+                    System.out.println("Task list:");
                     if (uploadTasks != null) {
                         uploadTasks.forEach((fileName, task) -> {
-                            System.out.println("UPLOAD-" + "File: " + fileName + ", Progress: " + task.getCurrentSize() + "/" + task.getTotalSize());
+                            if (task.status != Task.TaskStatus.COMPLETED && task.status != Task.TaskStatus.CANCELLED) {
+                                System.out.println("Download-" + "File: " + fileName + ", Progress: " + task.getCurrentSize() + "/" + task.getTotalSize() + ", Status: " + task.getStatus());
+                            }
                         });
                     }
                     if (downloadTasks != null) {
                         downloadTasks.forEach((fileName, task) -> {
-                            System.out.println("Download-" + "File: " + fileName + ", Progress: " + task.getCurrentSize() + "/" + task.getTotalSize());
+                            if (task.status != Task.TaskStatus.COMPLETED && task.status != Task.TaskStatus.CANCELLED) {
+                                System.out.println("Download-" + "File: " + fileName + ", Progress: " + task.getCurrentSize() + "/" + task.getTotalSize() + ", Status: " + task.getStatus());
+                            }
                         });
                     }
+                    System.out.println("Task List End");
                 }
                 case "pause" -> {
                     String type = cmdList[1]; // 任务ID，例如文件名
@@ -200,7 +208,7 @@ public class client {
                             task.pause();
                         }
                     }
-                    System.out.println(taskName +"is paused");
+                    System.out.println(taskName + "is paused");
                 }
                 case "resume" -> {
                     String type = cmdList[1]; // 任务ID，例如文件名
@@ -217,7 +225,7 @@ public class client {
                             task.resume();
                         }
                     }
-                    System.out.println(taskName +"is resumed");
+                    System.out.println(taskName + "is resumed");
                 }
                 case "cancel" -> {
                     String type = cmdList[1]; // 任务ID，例如文件名
@@ -234,7 +242,7 @@ public class client {
                             task.cancel();
                         }
                     }
-                    System.out.println(taskName +"is canceled");
+                    System.out.println(taskName + "is canceled");
                 }
 
             }
@@ -264,7 +272,7 @@ public class client {
             } else {
                 // 处理单个文件
                 System.out.printf("%s is a single file\n", fileName);
-                receiveFile(fileName,out, in, Paths.get(basePathString));
+                receiveFile(fileName, out, in, Paths.get(basePathString));
             }
         } catch (IOException e) {
             System.out.println("something close , if you know , dont panic");
@@ -286,7 +294,7 @@ public class client {
                     out.writeUTF(finalFile);
                     out.flush();
                     boolean isDir = in.readBoolean();
-                    receiveFile(finalFile,out, in, Paths.get(basePathString));
+                    receiveFile(finalFile, out, in, Paths.get(basePathString));
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
@@ -315,8 +323,8 @@ public class client {
                 if (task.getStatus() == Task.TaskStatus.CANCELLED) {
                     out.writeUTF("CANCEL");
                     out.flush();
-                    break; // 终止任务
-                }else{
+                    return; // 终止任务
+                } else {
                     out.writeUTF("IN_PROGRESS");
                     out.flush();
                 }
@@ -332,9 +340,11 @@ public class client {
                 }
             }
         }
+        task.finish();
+        System.out.println(relativePath + " transport successfully");
     }
 
-    private static void receiveFile(String fileName,ObjectOutputStream out, ObjectInputStream in, Path basePath) {
+    private static void receiveFile(String fileName, ObjectOutputStream out, ObjectInputStream in, Path basePath) {
         try {
             String relativePath = in.readUTF();
             long fileLength = in.readLong();
@@ -385,11 +395,14 @@ public class client {
                         throw new IOException("Thread interrupted", e);
                     }
                 }
+                task.finish();
+                System.out.println(relativePath + " transport successfully");
             }
-        }catch (IOException e){
+        } catch (IOException e) {
             System.out.println("something closed,if you know,dont panic");
         }
         System.out.printf("%s tp success\n", fileName);
+
     }
 
     private static boolean isDirectoryEmpty(Path directory) throws IOException {
